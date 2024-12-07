@@ -33,5 +33,6 @@ def generate_response_with_retrieval(query, index_path, corpus_path, gpt_model="
 
 if __name__ == "__main__":
     query = "Explain the topic of animals."
-    response = generate_response_with_retrieval(query, '../preprocessing/faiss_index', '../preprocessing/corpus.csv')
+    response = generate_response_with_retrieval(query, '../rag_preprocessing/faiss_index',
+                                                '../rag_preprocessing/corpus.csv')
     print(response)
