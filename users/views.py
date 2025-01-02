@@ -4,26 +4,41 @@ from rest_framework.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_2
 from django.contrib.auth import authenticate
 from .models import CustomUser
 from .serializers import UserRegistrationSerializer
-from .utils import send_activation_email
-from django.contrib.auth.hashers import make_password, check_password
+from .utils import send_verification_email
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class RegisterUserView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
     def post(self, request):
         serializer = UserRegistrationSerializer(data=request.data)
+
         if serializer.is_valid():
-            user = serializer.save()
-            # Set user as inactive until email verification
-            user.is_active = False
-            user.save()
-            send_activation_email(user, request)
-            return Response(
-                {'message': 'User registered successfully'},
-                status=HTTP_201_CREATED
-            )
-        return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
+            try:
+                # Create inactive user
+                user = serializer.save()
+                user.is_active = False
+                user.save()
+
+                # Send verification email with code
+                if send_verification_email(user):
+                    return Response({
+                        'message': 'Registration successful. Please check your email for verification code.',
+                        'email': user.email
+                    }, status=201)
+                else:
+                    raise Exception("Failed to send verification email")
+
+            except Exception as e:
+                return Response({'error': str(e)}, status=400)
+        return Response({'error': serializer.errors}, status=400)
 
 
 class LoginUserView(APIView):
@@ -42,20 +57,83 @@ class LoginUserView(APIView):
                 'access': str(refresh.access_token),
                 'refresh': str(refresh),
                 'message': 'Login successful',
+                'user': {
+                    'firstName': user.first_name,
+                    'lastName': user.last_name,
+                    'email': user.email,
+                    'grade': user.grade,
+                }
             }, status=HTTP_200_OK)
         return Response({'error': 'Invalid credentials'}, status=HTTP_400_BAD_REQUEST)
 
 
-class ActivateUserView(APIView):
-    def get(self, request, activation_token):
-        user = CustomUser.objects.filter(is_active=False).first()
-        if user and check_password(activation_token, user.activation_token):
+class VerifyCodeView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        email = request.data.get('email')
+        code = request.data.get('code')
+
+        if not email or not code:
+            return Response({'error': 'Email and verification code are required'}, status=400)
+
+        try:
+            # Add logging for debugging
+            logger.info(f"Attempting to verify code for email: {email}")
+
+            user = CustomUser.objects.filter(
+                email=email,
+                is_active=False
+            ).first()
+
+            if not user:
+                return Response({'error': 'User not found or already verified'}, status=400)
+
+            if user.verification_code != code:
+                return Response({'error': 'Invalid verification code'}, status=400)
+
+            # Verify user
             user.is_active = True
-            # Rehash the token to invalidate it
-            user.activation_token = make_password("invalidated")
+            user.verification_code = None
             user.save()
-            return Response({'message': 'User Account activated successfully'}, status=200)
-        return Response({'error': 'Invalid activation token'}, status=400)
+
+            # Generate tokens
+            refresh = RefreshToken.for_user(user)
+
+            return Response({
+                'message': 'Account verified successfully',
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+                'user': {
+                    'firstName': user.first_name,
+                    'lastName': user.last_name,
+                    'email': user.email,
+                    'grade': user.grade,
+                }
+            }, status=200)
+
+        except Exception as e:
+            logger.error(f"Verification error: {str(e)}")
+            return Response({'error': 'Verification failed'}, status=400)
+
+
+class ResendCodeView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+
+        if not email:
+            return Response({'error': 'Email is required'}, status=400)
+
+        try:
+            user = CustomUser.objects.get(email=email, is_active=False)
+            if send_verification_email(user):
+                return Response({'message': 'New verification code sent'}, status=200)
+            return Response({'error': 'Failed to send verification code'}, status=400)
+        except CustomUser.DoesNotExist:
+            return Response({'error': 'User not found'}, status=404)
 
 
 class LogoutUserView(APIView):
@@ -72,3 +150,25 @@ class LogoutUserView(APIView):
             return Response({'message': 'User logged out successfully'}, status=HTTP_205_RESET_CONTENT)
         except Exception as e:
             return Response({'error': str(e)}, status=HTTP_400_BAD_REQUEST)
+
+
+class UpdateGradeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        grade = request.data.get('grade')
+
+        if not grade:
+            return Response(
+                {'error': 'Grade is required'},
+                status=HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user
+        user.grade = grade
+        user.save()
+
+        return Response(
+            {'message': 'Grade updated successfully'},
+            status=HTTP_200_OK
+        )
