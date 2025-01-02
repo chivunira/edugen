@@ -29,7 +29,7 @@ class CustomUser(AbstractUser):
     grade = models.CharField(max_length=20, blank=True, null=True)
     profile_photo = models.ImageField(upload_to='profile_photos/', blank=True, null=True)
     is_active = models.BooleanField(default=False)
-    activation_token = models.CharField(max_length=128, unique=True, editable=False)
+    verification_code = models.CharField(max_length=4, blank=True, null=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']
