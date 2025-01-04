@@ -7,6 +7,8 @@ from .views import (
     UpdateGradeView,
     VerifyCodeView,
     ResendCodeView,
+    UserProfileView,
+    UpdateProfileView,
 )
 
 urlpatterns = [
@@ -17,4 +19,6 @@ urlpatterns = [
     path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('verify-code/', VerifyCodeView.as_view(), name='verify-code'),
     path('resend-code/', ResendCodeView.as_view(), name='resend-code'),
+    path('profile/', UserProfileView.as_view(), name='user-profile'),
+    path('profile/update/', UpdateProfileView.as_view(), name='update-profile'),
 ]

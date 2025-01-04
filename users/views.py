@@ -7,8 +7,13 @@ from .serializers import UserRegistrationSerializer
 from .utils import send_verification_email
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.permissions import IsAuthenticated, AllowAny
-
+from assessments.models import Assessment, AssessmentSummary
+from edugen_tutor_model.models import Topic
+from django.db.models import Count, Avg
+from .serializers import UserProfileSerializer, UserProfileUpdateSerializer
 import logging
+from rest_framework.parsers import MultiPartParser, FormParser
+
 
 logger = logging.getLogger(__name__)
 
@@ -172,3 +177,89 @@ class UpdateGradeView(APIView):
             {'message': 'Grade updated successfully'},
             status=HTTP_200_OK
         )
+
+
+class UserProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Get assessment summaries
+        topic_summaries = AssessmentSummary.objects.filter(user=user)
+
+        # Calculate overall statistics
+        overall_stats = topic_summaries.aggregate(
+            total_assessments=Count('total_attempts'),
+            average_score=Avg('average_score')
+        )
+
+        # Get topic-wise performance
+        topic_performance = []
+        for summary in topic_summaries:
+            recent_assessments = Assessment.objects.filter(
+                user=user,
+                topic=summary.topic,
+                status='completed'
+            ).order_by('-end_time')[:5]
+
+            topic_performance.append({
+                'topic_id': summary.topic.id,
+                'topic_name': summary.topic.name,
+                'subject_name': summary.topic.subject.name,
+                'total_attempts': summary.total_attempts,
+                'best_score': float(summary.best_score),
+                'average_score': float(summary.average_score),
+                'last_attempt_date': summary.last_attempt_date,
+                'recent_assessments': [{
+                    'id': assessment.id,
+                    'score': float(assessment.total_score),
+                    'date': assessment.end_time
+                } for assessment in recent_assessments]
+            })
+
+        # Get topics with no attempts
+        attempted_topic_ids = topic_summaries.values_list('topic__id', flat=True)
+        unattempted_topics = Topic.objects.exclude(
+            id__in=attempted_topic_ids
+        ).values('id', 'name', 'subject__name')
+
+        response_data = {
+            'user': UserProfileSerializer(user).data,
+            'overall_stats': {
+                'total_assessments': overall_stats['total_assessments'] or 0,
+                'average_score': float(overall_stats['average_score'] or 0),
+            },
+            'topic_performance': topic_performance,
+            'unattempted_topics': list(unattempted_topics)
+        }
+
+        return Response(response_data)
+
+
+class UpdateProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def patch(self, request):
+        try:
+            serializer = UserProfileUpdateSerializer(
+                request.user,
+                data=request.data,
+                partial=True
+            )
+
+            if serializer.is_valid():
+                serializer.save()
+                # Return full user profile after update
+                profile_serializer = UserProfileSerializer(request.user)
+                return Response(profile_serializer.data, status=HTTP_200_OK)
+
+            return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            logger.error(f"Profile update error: {str(e)}")
+            return Response(
+                {'error': 'Failed to update profile'},
+                status=HTTP_400_BAD_REQUEST
+            )
