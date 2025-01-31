@@ -26,7 +26,7 @@ def query_faiss(query, index_path, corpus_path, model_name="all-MiniLM-L6-v2", t
 
 
 if __name__ == "__main__":
-    query = "Explain the male reproductive system"
+    query = "Explain the parts of a bee"
     results = query_faiss(query, '../rag_preprocessing/faiss_index', '../rag_preprocessing/corpus.csv')
 
     for idx, (content, score) in enumerate(results):
